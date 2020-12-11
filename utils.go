@@ -21,5 +21,5 @@ func makeJson(data interface{}) string {
 	if err != nil {
 		return ""
 	}
-	return string(json.RawMessage(str))
+	return string(str)
 }

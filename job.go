@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"path"
 	"strconv"
@@ -402,6 +403,9 @@ func (j *Job) IsRunning() (bool, error) {
 	}
 	lastBuild, err := j.GetLastBuild()
 	if err != nil {
+		if err.Error() == "404" {
+			return false, nil
+		}
 		return false, err
 	}
 	return lastBuild.IsRunning(), nil
@@ -465,6 +469,72 @@ func (j *Job) InvokeSimple(params map[string]string) (int64, error) {
 	}
 
 	return number, nil
+}
+
+// Build create build for job, use job default string parameters and build parameters.
+func (j *Job) Build(buildParams map[string]string, requestParams map[string]string) (bool, error) {
+	var result bool
+	var err error
+	if queued, err := j.IsQueued(); err != nil {
+		return result, err
+	} else if queued {
+		return result, fmt.Errorf("%s has queued build", j.GetName())
+	}
+
+	if running, err := j.IsRunning(); err != nil {
+		return result, err
+	} else if running {
+		return result, fmt.Errorf("%s has running build, please try again later", j.GetName())
+	}
+
+	var b io.Reader
+	if buildParams != nil {
+		jobParams, err := j.GetParameters()
+		if err != nil {
+			return false, err
+		}
+		for _, p := range jobParams {
+			if _, ok := buildParams[p.Name]; ok {
+				continue
+			}
+			if p.Type == "StringParameterDefinition" {
+				if p.DefaultParameterValue.Value != nil {
+					buildParams[p.Name] = fmt.Sprint(p.DefaultParameterValue.Value)
+				} else {
+					buildParams[p.Name] = ""
+				}
+			}
+		}
+
+		list := make([]buildParameter, 0, len(buildParams))
+		for k, v := range buildParams {
+			list = append(list, buildParameter{Name: k, Value: v})
+		}
+		data := struct {
+			Parameter []buildParameter `json:"parameter"`
+		}{list}
+		bt, err := json.Marshal(data)
+		if err != nil {
+			return result, err
+		}
+		form := url.Values{}
+		form.Add("json", string(bt))
+		b = bytes.NewBufferString(form.Encode())
+	}
+
+	resp, err := j.Jenkins.Requester.Post(j.Base+"/build", b, nil, requestParams)
+	if err != nil {
+		return result, err
+	}
+	if resp.StatusCode == 200 || resp.StatusCode == 201 {
+		return true, nil
+	}
+	return false, fmt.Errorf("%d", resp.StatusCode)
+}
+
+type buildParameter struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 func (j *Job) Invoke(files []string, skipIfRunning bool, params map[string]string, cause string, securityToken string) (bool, error) {

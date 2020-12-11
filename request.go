@@ -209,7 +209,6 @@ func (r *Requester) Do(ar *APIRequest, responseStruct interface{}, options ...in
 		}
 		req.Header.Set("Content-Type", writer.FormDataContentType())
 	} else {
-
 		req, err = http.NewRequest(ar.Method, URL.String(), ar.Payload)
 		if err != nil {
 			return nil, err
